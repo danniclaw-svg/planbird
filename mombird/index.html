@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-title" content="MomBird">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#12203A">
+<link rel="manifest" href="manifest.webmanifest?v=1">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=1">
+<link rel="icon" type="image/png" href="icon-192.png?v=1">
 <title>MomBird</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -816,6 +823,7 @@ async function importHash(){
     }
     const j=JSON.parse(new TextDecoder().decode(bytes));
     if(!j||!Array.isArray(j.e))throw new Error("bad");
+    if(+j.t&&+j.t===S.sharedAt&&S.shared.length)return;
     const seen={},list=[];
     j.e.slice(0,600).forEach(r=>{
       if(!Array.isArray(r)||typeof r[4]!=="string"||!r[4].trim()||!validDate(r[0]))return;
@@ -827,7 +835,6 @@ async function importHash(){
     S.shared=list;S.sharedKid=typeof j.k==="string"?j.k.slice(0,40):"";S.sharedAt=+j.t||Date.now();S.kid=S.sharedKid;
     Object.keys(S.done).forEach(k=>{if(!list.some(x=>x.id===k))delete S.done[k]});
     hSave();
-    try{history.replaceState(null,"",location.pathname+location.search)}catch(e){}
     toast("Calendario actualizado: "+list.length+" "+plural(list.length,"actividad","actividades")+".");
   }catch(e){toast("No pude abrir el enlace. Pide que te lo manden de nuevo.")}
 }
