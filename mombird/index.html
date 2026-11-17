@@ -156,7 +156,14 @@ a.edit{color:var(--muted);font-size:13px;font-weight:600;padding:6px 8px;text-de
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:min(560px,calc(100% - 32px));background:var(--ink);color:var(--surface);padding:11px 16px;border-radius:10px;font-size:14px;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.3)}
 #dropveil{position:fixed;inset:0;z-index:40;background:color-mix(in srgb,var(--hi) 85%,transparent);display:grid;place-items:center;font-family:var(--font-display);font-weight:800;font-size:26px;color:var(--hi-ink);text-align:center;padding:24px}
 .loading{padding:28px 0;color:var(--muted)}
+.row.note{grid-template-columns:30px 1fr auto}
+.hintrow{margin:0 0 14px}
+.hintrow input{width:100%}
+.rv select.kind{font-weight:600}
+.rv .dis{opacity:.45}
 @media (max-width:480px){
+  .row.note{grid-template-columns:28px 1fr}
+  .row.note .acts{grid-column:2}
   .row{grid-template-columns:28px 40px 1fr;}
   .row .acts{grid-column:3;flex-direction:row;align-items:center;gap:6px}
   .row .acts .edit{padding-left:0}
@@ -173,13 +180,16 @@ a.edit{color:var(--muted);font-size:13px;font-weight:600;padding:6px 8px;text-de
   <p class="next-up" id="nextup"></p>
 
   <div class="toolbar" id="toolbar">
-    <button class="btn primary" data-act="pick" id="b-pick">Subir PDF o foto</button>
+    <button class="btn primary" data-act="pick" id="b-pick">Subir PDF, foto o captura</button>
     <button class="btn" data-act="add">Agregar actividad</button>
+    <button class="btn" data-act="addnote">Agregar pendiente</button>
     <button class="btn" data-act="copy" id="b-copy">Copiar próximos 7 días</button>
     <button class="btn" data-act="share" id="b-share" hidden>Compartir</button>
     <button class="btn" data-act="export" id="b-export">Exportar a Google Calendar</button>
     <input type="file" id="file" accept="application/pdf,image/*" multiple hidden>
   </div>
+
+  <div class="hintrow" id="hintrow" hidden><input type="text" id="hint" maxlength="400" placeholder="Indicaciones opcionales (ej.: lo de comprar va a pendientes)" aria-label="Indicaciones opcionales para Claude" autocomplete="off"></div>
 
   <div id="notice"></div>
   <div id="import"></div>
@@ -190,7 +200,7 @@ a.edit{color:var(--muted);font-size:13px;font-weight:600;padding:6px 8px;text-de
 
 <div id="modal" hidden></div>
 <div id="toast" role="status" aria-live="polite" hidden></div>
-<div id="dropveil" hidden>Suelta aquí los PDF o fotos del colegio</div>
+<div id="dropveil" hidden>Suelta aquí los PDF, fotos o capturas de conversaciones</div>
 
 <script>
 "use strict";
@@ -249,7 +259,10 @@ let sampleFn=null,dlFn=null;
 const PDFW="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 function loadPdfJs(){return new Promise((res,rej)=>{const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
 const hostedEvents=()=>S.shared.map(e=>Object.assign({},e,{shared:true,done:!!S.done[e.id]})).concat(S.own);
-const evs=()=>S.demo?S.demoEvents:(HOSTED?hostedEvents():S.events);
+const rawEvs=()=>S.demo?S.demoEvents:(HOSTED?hostedEvents():S.events);
+const evs=()=>rawEvs().filter(e=>validDate(e.date));
+const pend=()=>rawEvs().filter(e=>!validDate(e.date));
+const openPend=()=>pend().filter(e=>!e.done);
 
 /* ---------- almacenamiento ---------- */
 const LS="agenda-escolar-v1";
@@ -342,18 +355,24 @@ function renderHead(){
   const all=evs(),t=today();
   let s,n="";
   if(S.loading){s="Cargando tu agenda…"}
-  else if(!all.length){s='Sube el calendario del colegio y aquí verás <span class="hl">qué viene cada semana</span>.'}
+  else if(!all.length&&!pend().length){s='Sube el calendario del colegio o una captura de chat y aquí verás <span class="hl">qué viene cada semana</span>.'}
   else{
-    const we=weekEnd(t);
-    const wk=all.filter(e=>!e.done&&endOf(e)>=t&&e.date<=we&&e.type!=="sin_clases");
-    const c={};wk.forEach(e=>{c[e.type]=(c[e.type]||0)+1});
-    const parts=TYPES.filter(x=>c[x.id]).map(x=>'<span class="hl">'+c[x.id]+"</span> "+(c[x.id]===1?x.one:x.many));
-    s=parts.length?"Esta semana: "+joinEs(parts)+".":"Esta semana no tienes nada pendiente.";
-    const nx=all.filter(e=>!e.done&&endOf(e)>=t&&e.type!=="sin_clases").sort(cmp)[0];
-    if(nx)n="Lo próximo: "+esc(nx.title)+" · "+esc(relLabel(nx));
+    if(!all.length)s="Todavía no hay fechas en el calendario.";
+    else{
+      const we=weekEnd(t);
+      const wk=all.filter(e=>!e.done&&endOf(e)>=t&&e.date<=we&&e.type!=="sin_clases");
+      const c={};wk.forEach(e=>{c[e.type]=(c[e.type]||0)+1});
+      const parts=TYPES.filter(x=>c[x.id]).map(x=>'<span class="hl">'+c[x.id]+"</span> "+(c[x.id]===1?x.one:x.many));
+      s=parts.length?"Esta semana: "+joinEs(parts)+".":"Esta semana no tienes nada pendiente.";
+      const nx=all.filter(e=>!e.done&&endOf(e)>=t&&e.type!=="sin_clases").sort(cmp)[0];
+      if(nx)n="Lo próximo: "+esc(nx.title)+" · "+esc(relLabel(nx));
+    }
+    const on=openPend().length;
+    if(on)s+=' Tienes <span class="hl">'+on+"</span> "+plural(on,"pendiente","pendientes")+" sin fecha.";
   }
   $("#summary").innerHTML=s;$("#nextup").innerHTML=n;
-  $("#b-pick").disabled=!S.canAI;$("#b-pick").hidden=HOSTED;$("#b-share").hidden=HOSTED||!all.length||S.demo;
+  $("#b-pick").disabled=!S.canAI;$("#b-pick").hidden=HOSTED;$("#b-share").hidden=HOSTED||!rawEvs().length||S.demo;
+  $("#hintrow").hidden=HOSTED||!S.canAI;
   $("#b-export").hidden=!S.canDl;
   $("#b-copy").disabled=!all.length;
   $("#b-export").disabled=!all.length;
@@ -372,7 +391,8 @@ function renderNotice(){
   $("#notice").innerHTML=a.map(x=>'<div class="notice">'+x+"</div>").join("");
 }
 function renderTabs(){
-  const tabs=[["next","Próximos"],["month","Mes"],["all","Todas"]];if(!HOSTED)tabs.push(["files","Archivos"]);
+  const on=openPend().length;
+  const tabs=[["next","Próximos"],["pend","Pendientes"+(on?" ("+on+")":"")],["month","Mes"],["all","Todas"]];if(!HOSTED)tabs.push(["files","Archivos"]);
   $("#tabs").innerHTML=tabs.map(t=>'<button class="tab" role="tab" data-act="tab" data-tab="'+t[0]+'" aria-selected="'+(S.tab===t[0])+'">'+t[1]+"</button>").join("");
 }
 function rowHTML(e){
@@ -391,6 +411,14 @@ function rowHTML(e){
     '<div class="acts">'+(e.shared?"":'<button class="edit" data-act="edit" data-id="'+esc(e.id)+'" aria-label="Editar: '+esc(e.title)+'">Editar</button>')+
     (!e.done&&!past?'<a class="edit" href="'+esc(gcalURL(e))+'" target="_blank" rel="noopener noreferrer" aria-label="Agregar al calendario: '+esc(e.title)+'">Al calendario</a>':"")+"</div></li>";
 }
+function noteRowHTML(e){
+  const src=e.sourceName?"<span>de: "+esc(e.sourceName)+"</span>":"";
+  return '<li class="row note t-'+esc(e.type||"otro")+(e.done?" done":"")+'">'+
+    '<button class="chk" data-act="toggle" data-id="'+esc(e.id)+'" aria-pressed="'+(!!e.done)+'" aria-label="Marcar como hecho: '+esc(e.title)+'"></button>'+
+    '<div><div class="ttl">'+esc(e.title)+'</div><div class="meta"><span class="chip">'+esc((T[e.type]||T.otro).label)+"</span><span>"+(e.done?"hecho":"sin fecha")+"</span>"+src+"</div>"+
+    (e.notes?'<div class="notes">'+esc(e.notes)+"</div>":"")+"</div>"+
+    '<div class="acts">'+(e.shared?"":'<button class="edit" data-act="edit" data-id="'+esc(e.id)+'" aria-label="Editar o ponerle fecha: '+esc(e.title)+'">Editar / poner fecha</button>')+"</div></li>";
+}
 function gcalURL(e){
   const d8=s=>s.replace(/-/g,"");
   const dates=e.time?d8(e.date)+"T"+e.time.replace(":","")+"00/"+d8(e.date)+"T"+plus60(e.time).replace(":","")+"00":d8(e.date)+"/"+d8(addDays(endOf(e),1));
@@ -398,21 +426,23 @@ function gcalURL(e){
   return "https://calendar.google.com/calendar/render?action=TEMPLATE&text="+encodeURIComponent((T[e.type]||T.otro).label+": "+e.title)+"&dates="+dates+(det?"&details="+encodeURIComponent(det):"");
 }
 const listHTML=a=>'<ul class="list">'+a.map(rowHTML).join("")+"</ul>";
+const noteList=a=>'<ul class="list">'+a.map(noteRowHTML).join("")+"</ul>";
+const byNew=(a,b)=>(b.createdAt||0)-(a.createdAt||0);
 function renderView(){
   const v=$("#view");
   if(S.loading){v.innerHTML='<p class="loading">Cargando tu agenda…</p>';return}
-  v.innerHTML=S.tab==="month"?viewMonth():S.tab==="all"?viewAll():S.tab==="files"?viewFiles():viewNext();
+  v.innerHTML=S.tab==="month"?viewMonth():S.tab==="all"?viewAll():S.tab==="files"?viewFiles():S.tab==="pend"?viewPend():viewNext();
 }
 function viewNext(){
   const all=evs(),t=today();
-  if(!all.length&&HOSTED){
+  if(!all.length&&!pend().length&&HOSTED){
     return '<div class="panel empty"><h2>Todavía no hay un calendario aquí</h2><p class="sub">Abre el enlace que te mandaron con el calendario del colegio. También puedes agregar actividades a mano.</p><div class="actions"><button class="btn primary" data-act="add">Agregar a mano</button><button class="btn" data-act="demo">Ver un ejemplo</button></div></div>';
   }
-  if(!all.length){
+  if(!all.length&&!pend().length){
     return '<div class="panel empty"><h2>Sube el calendario del colegio</h2>'+
-      '<p class="sub">PDF o foto. Claude lee las fechas de exámenes, entregas, reuniones, feriados y pagos, y las ordena por semana.</p>'+
+      '<p class="sub">PDF, foto o captura de una conversación con la maestra o el colegio. Claude lee las fechas de exámenes, entregas, reuniones, feriados y pagos, y las ordena por semana. Lo que no tenga fecha queda en Pendientes.</p>'+
       '<div class="actions"><button class="btn primary" data-act="pick"'+(S.canAI?"":" disabled")+'>Elegir archivos</button><button class="btn" data-act="add">Agregar a mano</button><button class="btn" data-act="demo">Ver un ejemplo</button></div>'+
-      '<ol><li>Sube uno o varios archivos del colegio. También puedes arrastrarlos a esta página.</li><li>Revisa lo que encontró y corrige lo que haga falta.</li><li>Márcalas como hechas o expórtalas a tu calendario para recibir alertas en el teléfono.</li></ol></div>';
+      '<ol><li>Sube uno o varios archivos o capturas de chat. También puedes arrastrarlos o pegarlos (Ctrl+V) en esta página.</li><li>Revisa lo que encontró y corrige lo que haga falta.</li><li>Márcalas como hechas o expórtalas a tu calendario para recibir alertas en el teléfono.</li></ol></div>';
   }
   const eff=e=>e.date<t?t:e.date;
   const overdue=all.filter(e=>!e.done&&endOf(e)<t&&(e.type==="entrega"||e.type==="tramite")&&diffDays(t,endOf(e))<=14).sort(cmp);
@@ -427,7 +457,17 @@ function viewNext(){
   G.forEach(g=>{const l=up.filter(g[2]);if(l.length)h+='<h3 class="grp">'+g[0]+(g[1]?" <span>"+esc(g[1])+"</span>":"")+"</h3>"+listHTML(l)});
   const beyond=up.filter(e=>eff(e)>far).length;
   if(!up.length&&!overdue.length)h+='<div class="allok">Todo al día. No hay actividades pendientes.</div>';
+  const op=openPend().sort(byNew);
+  if(op.length)h+='<h3 class="grp">Pendientes <span>sin fecha</span></h3>'+noteList(op.slice(0,5))+(op.length>5?'<p class="sub" style="margin-top:8px"><button class="edit" data-act="tab" data-tab="pend">Ver los '+op.length+" pendientes</button></p>":"");
   if(beyond)h+='<p class="sub" style="margin-top:18px">Hay '+beyond+" "+plural(beyond,"actividad","actividades")+' más adelante. <button class="edit" data-act="tab" data-tab="all">Ver todas</button></p>';
+  return h;
+}
+function viewPend(){
+  const l=pend(),open=l.filter(e=>!e.done).sort(byNew),done=l.filter(e=>e.done).sort(byNew);
+  let h='<p class="sub" style="margin:0 0 8px">Cosas por hacer que no tienen fecha. Si les pones fecha, pasan al calendario.</p>';
+  if(!l.length)return h+'<div class="allok">No tienes pendientes. Sube una captura de chat o usa «Agregar pendiente».</div>';
+  h+=open.length?noteList(open):'<div class="allok">Todo hecho.</div>';
+  if(done.length)h+='<h3 class="grp">Hechos <span>'+done.length+"</span></h3>"+noteList(done);
   return h;
 }
 function viewMonth(){
@@ -509,32 +549,53 @@ async function renderPages(pdf,n){
   }
   return out;
 }
-function buildPrompt(name,text,hasImgs){
-  return "Eres un asistente que ayuda a un padre a no perderse ninguna actividad del colegio de su hijo.\n"+
-  "Fecha de hoy: "+today()+". Documento: \""+name+"\".\n"+
-  (hasImgs?"Se adjuntan imágenes de las páginas. Úsalas para entender calendarios en cuadrícula (qué nota cae en qué día). "+(text?"El texto extraído va más abajo y puede estar desordenado.":"")+"\n":"")+
-  "\nExtrae TODA actividad que tenga fecha: exámenes y pruebas, tareas, proyectos y entregas, reuniones de padres, feriados, días sin clases, vacaciones, excursiones, actos, ferias, deportes, pagos, formularios, permisos, días con uniforme o vestimenta especial.\n"+
-  "Reglas:\n- No inventes fechas. Si falta el año, usa el año escolar que incluya la fecha de hoy.\n- Si una actividad dura varios días (vacaciones, semana de exámenes), usa date y endDate.\n- Pon en notes lo útil para el padre: materia, temas, qué llevar, uniforme, costo, hora de salida.\n- Marca uncertain=true si la fecha es ambigua o la deduces.\n- Ignora el horario semanal recurrente de clases; menciónalo en el campo notes del objeto raíz.\n"+
-  "- type es uno de: examen, entrega, reunion, sin_clases, evento, tramite, otro.\n- Escribe en español, con títulos cortos.\n\n"+
+function buildPrompt(name,text,hasImgs,hint){
+  return "Eres un asistente que ayuda a un padre a no perderse nada de lo que pasa en el colegio de su hijo.\n"+
+  "Fecha de hoy: "+today()+" ("+F.long.format(parse(today()))+"). Archivo: \""+name+"\".\n"+
+  (hasImgs?"Se adjuntan imágenes, en orden. Pueden ser páginas de calendarios o circulares, o capturas y fotos de CONVERSACIONES (WhatsApp, SMS, correo, chat con la maestra, grupo de padres). "+(text?"El texto extraído va más abajo y puede estar desordenado.":"")+"\n":"")+
+  "\nSi son conversaciones: léelas en orden cronológico (de arriba hacia abajo y de una captura a la siguiente). Ignora saludos, charla y mensajes sin información útil. Si un mensaje corrige a otro (cambio de fecha, cancelación), usa solo la versión final. Las fechas relativas (\"mañana\", \"el viernes\", \"la próxima semana\") se calculan desde la fecha del mensaje si se ve en la captura (encabezado del día, hora del mensaje); si no se ve, desde la fecha de hoy. Si la fecha queda dudosa, marca uncertain=true.\n"+
+  "\nExtrae TODO lo que el padre debe saber o hacer: exámenes y pruebas, tareas, proyectos y entregas, reuniones, feriados, días sin clases, vacaciones, excursiones, actos, ferias, deportes, pagos, formularios, permisos, autorizaciones, materiales que hay que llevar o comprar, días con uniforme o vestimenta especial, mensajes que piden una respuesta.\n"+
+  "Clasifica cada punto con kind:\n"+
+  "- \"evento\": tiene fecha concreta (o una que puedas calcular con seguridad). Va al calendario. Una tarea con fecha límite concreta (\"pagar antes del 20\") es un evento.\n"+
+  "- \"pendiente\": algo que el padre debe hacer, llevar, comprar, firmar, pagar o responder y NO tiene fecha concreta (\"mandar la autorización\", \"comprar cartulina\", \"avisar si va a la excursión\"). No pongas date. Si hay un plazo vago (\"esta semana\", \"antes de la excursión\"), escríbelo en notes.\n"+
+  "Reglas:\n- No inventes fechas. Si falta el año, usa el año escolar que incluya la fecha de hoy.\n- Si una actividad dura varios días (vacaciones, semana de exámenes), usa date y endDate.\n- Pon en notes lo útil para el padre: materia, temas, qué llevar, uniforme, costo, hora de salida, quién lo dijo si es una conversación.\n- Ignora el horario semanal recurrente de clases; menciónalo en el campo notes del objeto raíz.\n"+
+  "- type es uno de: examen, entrega, reunion, sin_clases, evento, tramite, otro.\n- Escribe en español, con títulos cortos que se entiendan sin ver la conversación.\n"+
+  (hint?"\nINDICACIONES DEL PADRE (tienen prioridad sobre las reglas anteriores): "+hint+"\n":"")+"\n"+
   "Responde SOLO con un objeto JSON con esta forma:\n"+
-  '{"events":[{"title":"Examen de Matemática","date":"2026-11-20","endDate":null,"time":"08:00","type":"examen","notes":"Capítulos 4 y 5","uncertain":false}],"notes":"texto breve sobre lo que omitiste o no pudiste leer, o vacío"}\n'+
+  '{"events":[{"kind":"evento","title":"Examen de Matemática","date":"2026-11-20","endDate":null,"time":"08:00","type":"examen","notes":"Capítulos 4 y 5","uncertain":false},{"kind":"pendiente","title":"Comprar cartulina y marcadores","date":null,"endDate":null,"time":"","type":"otro","notes":"Para el proyecto, esta semana","uncertain":false}],"notes":"texto breve sobre lo que omitiste o no pudiste leer, o vacío"}\n'+
   (text?"\nTEXTO DEL DOCUMENTO:\n"+text.slice(0,150000):"");
 }
 function normalizeEvents(out){
   const arr=Array.isArray(out)?out:(out&&Array.isArray(out.events)?out.events:[]);
   const res=[];
   arr.forEach(x=>{
-    if(!x||typeof x.title!=="string"||!x.title.trim()||!validDate(x.date))return;
-    const end=validDate(x.endDate)&&x.endDate>x.date?x.endDate:null;
-    res.push({title:x.title.trim().slice(0,120),date:x.date,endDate:end,time:validTime(x.time)?x.time:"",
-      type:T[x.type]?x.type:"otro",notes:typeof x.notes==="string"?x.notes.trim().slice(0,400):"",uncertain:!!x.uncertain});
+    if(!x||typeof x.title!=="string"||!x.title.trim())return;
+    const title=x.title.trim().slice(0,120),type=T[x.type]?x.type:"otro",notes=typeof x.notes==="string"?x.notes.trim().slice(0,400):"";
+    if(x.kind!=="pendiente"&&validDate(x.date)){
+      const end=validDate(x.endDate)&&x.endDate>x.date?x.endDate:null;
+      res.push({kind:"evento",title,date:x.date,endDate:end,time:validTime(x.time)?x.time:"",type,notes,uncertain:!!x.uncertain});
+    }else{
+      res.push({kind:"pendiente",title,date:"",endDate:null,time:"",type,notes,uncertain:false,dg:x.kind!=="pendiente"});
+    }
   });
   return res;
 }
-async function processFile(file,row,signal){
+async function shrinkImg(f){
+  try{
+    if(!window.createImageBitmap||(f.size<1500000&&/jpeg|webp/.test(f.type)))return f;
+    const bm=await createImageBitmap(f),k=Math.min(1,2000/Math.max(bm.width,bm.height));
+    if(k===1&&f.size<2500000){bm.close&&bm.close();return f}
+    const c=document.createElement("canvas");c.width=Math.round(bm.width*k);c.height=Math.round(bm.height*k);
+    const ctx=c.getContext("2d");ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(bm,0,0,c.width,c.height);bm.close&&bm.close();
+    const b=await new Promise(r=>c.toBlob(r,"image/jpeg",0.88));
+    return b||f;
+  }catch(e){return f}
+}
+async function processFile(job,row,signal){
   row.st="read";render();
   let text="",imgs=[],warn="";
-  if(isPdf(file)){
+  if(job.pdf){
+    const file=job.pdf;
     if(!window.pdfjsLib){try{await loadPdfJs()}catch(e){throw {code:"nopdf"}}}if(!window.pdfjsLib)throw {code:"nopdf"};
     pdfjsLib.GlobalWorkerOptions.workerSrc=PDFW;
     const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
@@ -554,17 +615,19 @@ async function processFile(file,row,signal){
     try{pdf.destroy()}catch(e){}
   }else{
     if(!S.imgMax)throw {code:"noimg"};
-    imgs=[file];row.pages=1;
+    imgs=[];for(const f of job.imgs)imgs.push(await shrinkImg(f));
+    row.pages=imgs.length;
   }
   if(signal.aborted)throw {code:"cancelled"};
   row.st="ai";render();
   const opts={signal,modelTier:"default"};
   if(imgs.length)opts.images=imgs;
-  const out=await sampleFn.json(buildPrompt(file.name,text,imgs.length>0),opts);
+  const out=await sampleFn.json(buildPrompt(job.name,text,imgs.length>0,job.hint),opts);
   row.items=normalizeEvents(out);
   const note=out&&typeof out.notes==="string"?out.notes.trim():"";
   row.st="ok";
-  row.msg=row.items.length+" "+plural(row.items.length,"actividad","actividades")+(note?" · "+note:"")+(warn?" · "+warn:"");
+  const np=row.items.filter(x=>x.kind==="pendiente").length,ne=row.items.length-np;
+  row.msg=ne+" "+plural(ne,"actividad","actividades")+(np?" y "+np+" "+plural(np,"pendiente","pendientes"):"")+(note?" · "+note:"")+(warn?" · "+warn:"");
 }
 async function handleFiles(files){
   if(!S.canAI){toast("Esta vista no puede analizar archivos con Claude.");return}
@@ -572,22 +635,33 @@ async function handleFiles(files){
   const list=[...files].filter(f=>isPdf(f)||isImg(f));
   if(!list.length){toast("Sube archivos PDF o imágenes (JPG, PNG).");return}
   if(S.demo)S.demo=false;
+  const hintEl=$("#hint"),hint=hintEl?hintEl.value.trim().slice(0,400):"";
+  const jobs=[];
+  list.filter(isPdf).forEach(f=>jobs.push({name:f.name,kind:"pdf",pdf:f,imgs:[],hint}));
+  const pics=list.filter(f=>!isPdf(f)),chunk=Math.max(1,Math.min(S.imgMax||1,10));
+  const parts=Math.ceil(pics.length/chunk);
+  for(let i=0;i<pics.length;i+=chunk){
+    const g=pics.slice(i,i+chunk),k=i/chunk+1;
+    const nm=pics.length===1?pics[0].name:"Capturas o fotos ("+pics.length+")"+(parts>1?" · parte "+k+" de "+parts:"");
+    jobs.push({name:nm,kind:"imagen",pdf:null,imgs:g,hint});
+  }
+  if(hintEl)hintEl.value="";
   const ctl=new AbortController();
-  S.imp={rows:list.map((f,i)=>({id:"f"+i,name:f.name,kind:isPdf(f)?"pdf":"imagen",st:"wait",msg:"",items:[],pages:0})),review:null,busy:true,ctl,saving:false};
+  S.imp={rows:jobs.map((j,i)=>({id:"f"+i,name:j.name,kind:j.kind,st:"wait",msg:"",items:[],pages:0})),review:null,busy:true,ctl,saving:false};
   render();
-  for(let i=0;i<list.length;i++){
+  for(let i=0;i<jobs.length;i++){
     const row=S.imp.rows[i];
     if(ctl.signal.aborted){row.st="err";row.msg="Cancelado.";continue}
-    try{await processFile(list[i],row,ctl.signal)}catch(e){row.st="err";row.msg=errMsg(e);console.warn(e)}
+    try{await processFile(jobs[i],row,ctl.signal)}catch(e){row.st="err";row.msg=errMsg(e);console.warn(e)}
     render();
   }
-  const have=new Set(S.events.map(e=>e.date+"|"+norm(e.title)));
+  const have=new Set(S.events.map(e=>(validDate(e.date)?e.date:"")+"|"+norm(e.title)));
   const rv=[];
   S.imp.rows.forEach(r=>r.items.forEach(it=>{
-    const dup=have.has(it.date+"|"+norm(it.title));
-    rv.push(Object.assign({},it,{src:r.id,srcName:r.name,dup,on:!dup}));
+    const dup=have.has((it.kind==="pendiente"?"":it.date)+"|"+norm(it.title));
+    rv.push(Object.assign({},it,{src:r.id,srcName:r.name,dup,on:!dup,pdate:it.date}));
   }));
-  rv.sort(cmp);
+  rv.sort((a,b)=>(a.kind==="pendiente")-(b.kind==="pendiente")||cmp(a,b));
   S.imp.review=rv;S.imp.busy=false;render();
 }
 function renderImport(){
@@ -604,48 +678,56 @@ function renderImport(){
   }else if(im.review){
     const rv=im.review;
     if(!rv.length){
-      h+='<p class="sub">No encontré actividades con fecha en estos archivos.</p><button class="btn" data-act="rvclose">Cerrar</button>';
+      h+='<p class="sub">No encontré actividades ni pendientes en estos archivos.</p><button class="btn" data-act="rvclose">Cerrar</button>';
     }else{
-      h+='<p class="sub">Encontré '+rv.length+" "+plural(rv.length,"actividad","actividades")+". Corrige lo que haga falta y desmarca lo que no quieras.</p>";
+      const rp=rv.filter(x=>x.kind==="pendiente").length,re=rv.length-rp;
+      h+='<p class="sub">Encontré '+re+" "+plural(re,"actividad","actividades")+(rp?" para el calendario y "+rp+" "+plural(rp,"pendiente","pendientes"):"")+". Corrige lo que haga falta, cambia el destino si no es el correcto y desmarca lo que no quieras.</p>";
       h+='<ul class="rv-list">'+rv.map((x,i)=>
         '<li class="rv t-'+esc(x.type)+(x.on?"":" off")+'"><input type="checkbox" id="rv-c-'+i+'" data-rv="on" data-i="'+i+'"'+(x.on?" checked":"")+' aria-label="Incluir: '+esc(x.title)+'"><div class="f">'+
-        '<input type="date" id="rv-d-'+i+'" data-rv="date" data-i="'+i+'" value="'+esc(x.date)+'" aria-label="Fecha">'+
+        '<select class="kind" id="rv-k-'+i+'" data-rv="kind" data-i="'+i+'" aria-label="Destino"><option value="evento"'+(x.kind==="pendiente"?"":" selected")+'>Calendario</option><option value="pendiente"'+(x.kind==="pendiente"?" selected":"")+">Pendiente</option></select>"+
+        (x.kind==="pendiente"?"":'<input type="date" id="rv-d-'+i+'" data-rv="date" data-i="'+i+'" value="'+esc(x.date)+'" aria-label="Fecha">')+
         '<input type="text" id="rv-t-'+i+'" data-rv="title" data-i="'+i+'" value="'+esc(x.title)+'" aria-label="Título">'+
         '<select id="rv-y-'+i+'" data-rv="type" data-i="'+i+'" aria-label="Tipo">'+TYPES.map(t=>'<option value="'+t.id+'"'+(t.id===x.type?" selected":"")+">"+t.label+"</option>").join("")+"</select>"+
         (x.endDate?'<span class="st">hasta '+esc(F.short.format(parse(x.endDate)))+"</span>":"")+(x.time?'<span class="st">'+esc(x.time)+"</span>":"")+
-        (x.uncertain?'<span class="flag">Revisa la fecha</span>':"")+(x.dup?'<span class="flag dup">Ya está en tu agenda</span>':"")+
+        (x.kind==="pendiente"?(x.dg?'<span class="flag">No encontré una fecha clara</span>':""):(x.uncertain?'<span class="flag">Revisa la fecha</span>':""))+(x.dup?'<span class="flag dup">Ya está en tu agenda</span>':"")+
         (x.notes?'<span class="st" style="flex-basis:100%">'+esc(x.notes)+"</span>":"")+"</div></li>").join("")+"</ul>";
       const n=rv.filter(x=>x.on).length;
-      h+='<div class="toolbar" style="margin:0"><button class="btn primary" id="rv-go" data-act="rvgo"'+(im.saving||!n?" disabled":"")+">"+(im.saving?"Guardando…":"Agregar "+n+" "+plural(n,"actividad","actividades"))+'</button><button class="btn" data-act="rvclose"'+(im.saving?" disabled":"")+">Descartar</button></div>";
+      h+='<div class="toolbar" style="margin:0"><button class="btn primary" id="rv-go" data-act="rvgo"'+(im.saving||!n?" disabled":"")+">"+(im.saving?"Guardando…":"Agregar "+n+" "+plural(n,"elemento","elementos"))+'</button><button class="btn" data-act="rvclose"'+(im.saving?" disabled":"")+">Descartar</button></div>";
     }
   }
   el.innerHTML=h+"</div>";
 }
 async function confirmImport(){
   const im=S.imp;if(!im||im.saving)return;
-  const pick=im.review.filter(x=>x.on&&x.title.trim()&&validDate(x.date));
+  const pick=im.review.filter(x=>x.on&&x.title.trim());
   if(!pick.length)return;
+  const bad=pick.filter(x=>x.kind!=="pendiente"&&!validDate(x.date)).length;
+  if(bad){toast("Ponle fecha a "+bad+" "+plural(bad,"actividad","actividades")+" del calendario o cámbialas a Pendiente.");return}
   im.saving=true;render();
   try{
     for(const r of im.rows){
       const mine=pick.filter(x=>x.src===r.id);if(!mine.length)continue;
       const sid=await ops().addSource({name:r.name,kind:r.kind,pages:r.pages||0,count:mine.length,addedAt:Date.now()});
       for(const x of mine){
-        await ops().addEvent({title:x.title.trim().slice(0,120),date:x.date,endDate:x.endDate&&x.endDate>x.date?x.endDate:null,time:x.time||"",type:x.type,notes:x.notes||"",done:false,sourceId:sid,sourceName:r.name,createdAt:Date.now()});
+        const pd=x.kind==="pendiente";
+        await ops().addEvent({title:x.title.trim().slice(0,120),date:pd?"":x.date,endDate:!pd&&x.endDate&&x.endDate>x.date?x.endDate:null,time:pd?"":(x.time||""),type:x.type,notes:x.notes||"",done:false,sourceId:sid,sourceName:r.name,createdAt:Date.now()});
       }
     }
   }catch(e){im.saving=false;render();return}
-  S.imp=null;S.tab="next";render();
-  toast("Agregué "+pick.length+" "+plural(pick.length,"actividad","actividades")+" a tu agenda.");
+  const np=pick.filter(x=>x.kind==="pendiente").length,ne=pick.length-np;
+  S.imp=null;S.tab=ne?"next":"pend";render();
+  toast((ne?"Agregué "+ne+" "+plural(ne,"actividad","actividades")+" a tu agenda":"")+(ne&&np?" y ":"")+(np?(ne?"":"Agregué ")+np+" "+plural(np,"pendiente","pendientes"):"")+".");
 }
 
 /* ---------- editar ---------- */
-function editModal(id,date){
-  const e=id?evs().find(x=>x.id===id):null;
-  const v=e||{title:"",date:date||(S.tab==="month"?S.selDay:today()),endDate:"",time:"",type:"evento",notes:""};
-  openModal('<h2>'+(e?"Editar actividad":"Agregar actividad")+'</h2><div class="form">'+
+function editModal(id,date,asNote){
+  const e=id?rawEvs().find(x=>x.id===id):null;
+  const isNote=e?!validDate(e.date):!!asNote;
+  const v=e||{title:"",date:isNote?"":(date||(S.tab==="month"?S.selDay:today())),endDate:"",time:"",type:isNote?"otro":"evento",notes:""};
+  openModal('<h2>'+(e?(isNote?"Editar pendiente":"Editar actividad"):(isNote?"Agregar pendiente":"Agregar actividad"))+'</h2><div class="form">'+
     '<label>Título<input type="text" id="m-title" value="'+esc(v.title)+'" maxlength="120"></label>'+
-    '<div class="two"><label>Fecha<input type="date" id="m-date" value="'+esc(v.date)+'"></label><label>Hasta (opcional)<input type="date" id="m-end" value="'+esc(v.endDate||"")+'"></label></div>'+
+    '<div class="two"><label>Fecha'+(isNote?" (opcional)":"")+'<input type="date" id="m-date" value="'+esc(validDate(v.date)?v.date:"")+'"></label><label>Hasta (opcional)<input type="date" id="m-end" value="'+esc(v.endDate||"")+'"></label></div>'+
+    '<p class="st" style="margin:-4px 0 0">Sin fecha queda en Pendientes. Con fecha pasa al calendario.</p>'+
     '<div class="two"><label>Hora (opcional)<input type="time" id="m-time" value="'+esc(v.time||"")+'"></label><label>Tipo<select id="m-type">'+TYPES.map(t=>'<option value="'+t.id+'"'+(t.id===v.type?" selected":"")+">"+t.label+"</option>").join("")+"</select></label></div>"+
     '<label>Notas<textarea id="m-notes" maxlength="400">'+esc(v.notes||"")+"</textarea></label></div>"+
     '<p id="m-err" class="st err" role="alert"></p>'+
@@ -655,13 +737,15 @@ async function saveModal(id){
   const title=$("#m-title").value.trim(),date=$("#m-date").value,end=$("#m-end").value,time=$("#m-time").value;
   const err=$("#m-err");
   if(!title){err.textContent="Escribe un título.";return}
-  if(!validDate(date)){err.textContent="Elige la fecha.";return}
-  if(end&&end<date){err.textContent="La fecha final no puede ser anterior a la inicial.";return}
-  const d={title,date,endDate:end&&end>date?end:null,time:validTime(time)?time:"",type:$("#m-type").value,notes:$("#m-notes").value.trim()};
+  if(date&&!validDate(date)){err.textContent="La fecha no es válida.";return}
+  if(date&&end&&end<date){err.textContent="La fecha final no puede ser anterior a la inicial.";return}
+  const type=$("#m-type").value,notes=$("#m-notes").value.trim();
+  const d=date?{title,date,endDate:end&&end>date?end:null,time:validTime(time)?time:"",type,notes}:{title,date:"",endDate:null,time:"",type,notes};
   try{
     if(id)await ops().patchEvent(id,d);
     else await ops().addEvent(Object.assign(d,{done:false,sourceId:"",sourceName:"",createdAt:Date.now()}));
     closeModal();
+    if(date&&S.tab==="pend")toast("Pasó al calendario.");
   }catch(e){}
 }
 
@@ -713,7 +797,9 @@ function startDemo(){
     mk(d(9),"Pago de cuota de materiales","tramite","","Hasta el viernes en administración"),
     mk(d(12),"Día sin clases","sin_clases","","Jornada docente"),
     mk(d(21),"Vacaciones de verano","sin_clases","","Regreso a clases el lunes siguiente",d(35)),
-    mk(d(16),"Acto de fin de año","evento","10:00","Uniforme de gala")
+    mk(d(16),"Acto de fin de año","evento","10:00","Uniforme de gala"),
+    mk("","Comprar cartulina y marcadores","otro","","Para el proyecto de Ciencias, esta semana"),
+    mk("","Responder a la maestra sobre la excursión","tramite","","Confirmar si va y si necesita almuerzo")
   ];
   S.demo=true;S.imp=null;S.tab="next";render();
 }
@@ -725,6 +811,7 @@ document.addEventListener("click",async ev=>{
   switch(a){
     case "pick":$("#file").click();break;
     case "add":editModal(null,b.dataset.date);break;
+    case "addnote":editModal(null,null,true);break;
     case "edit":editModal(id);break;
     case "save":await saveModal(id||null);break;
     case "del":
@@ -732,7 +819,7 @@ document.addEventListener("click",async ev=>{
       try{await ops().removeEvent(id);closeModal()}catch(e){}break;
     case "close":closeModal();break;
     case "tab":S.tab=b.dataset.tab;render();break;
-    case "toggle":{const e=evs().find(x=>x.id===id);if(e)try{await ops().patchEvent(id,{done:!e.done})}catch(x){}break}
+    case "toggle":{const e=rawEvs().find(x=>x.id===id);if(e)try{await ops().patchEvent(id,{done:!e.done})}catch(x){}break}
     case "day":S.selDay=b.dataset.date;render();break;
     case "prevm":{const d=parse(S.month);S.month=ymd(new Date(d.getFullYear(),d.getMonth()-1,1));S.selDay=S.month;render();break}
     case "nextm":{const d=parse(S.month);S.month=ymd(new Date(d.getFullYear(),d.getMonth()+1,1));S.selDay=S.month;render();break}
@@ -773,7 +860,18 @@ document.addEventListener("change",ev=>{
   if(t.id==="fstatus"){S.filter.status=t.value;render();return}
   if(t.id==="kid"){S.kid=t.value.trim();if(!S.demo)Store.ops.saveKid(S.kid).catch(()=>{});render();return}
   if(t.id==="file"){handleFiles(t.files);t.value="";return}
-  if(t.dataset&&t.dataset.rv==="on"&&S.imp&&S.imp.review){S.imp.review[+t.dataset.i].on=t.checked;render()}
+  if(t.dataset&&t.dataset.rv==="on"&&S.imp&&S.imp.review){S.imp.review[+t.dataset.i].on=t.checked;render();return}
+  if(t.dataset&&t.dataset.rv==="kind"&&S.imp&&S.imp.review){
+    const x=S.imp.review[+t.dataset.i];if(!x)return;
+    if(t.value==="pendiente"){x.kind="pendiente";x.dg=false}
+    else{x.kind="evento";if(!validDate(x.date))x.date=validDate(x.pdate)?x.pdate:""}
+    render();
+  }
+});
+document.addEventListener("paste",e=>{
+  if(HOSTED||!$("#modal").hidden)return;
+  const f=[...((e.clipboardData&&e.clipboardData.files)||[])].filter(isImg);
+  if(f.length){e.preventDefault();handleFiles(f)}
 });
 $("#kid").addEventListener("keydown",e=>{if(e.key==="Enter")e.target.blur()});
 let dragN=0;
@@ -789,19 +887,21 @@ function unb64u(t){t=t.replace(/-/g,"+").replace(/_/g,"/");while(t.length%4)t+="
 function hash36(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return (h>>>0).toString(36)}
 async function packShare(){
   const from=addDays(today(),-7);
-  const rows=evs().filter(e=>endOf(e)>=from).sort(cmp).map(e=>[e.date,e.endDate||"",e.time||"",TYPES.findIndex(x=>x.id===e.type),e.title,e.notes||""]);
+  const row=e=>[e.date||"",e.endDate||"",e.time||"",TYPES.findIndex(x=>x.id===e.type),e.title,e.notes||""];
+  const dated=evs().filter(e=>endOf(e)>=from).sort(cmp).map(row),notes=openPend().sort(byNew).map(row);
+  const rows=dated.concat(notes);
   const raw=new TextEncoder().encode(JSON.stringify({v:1,k:S.kid||"",t:Date.now(),e:rows}));
   if(window.CompressionStream){
     const cs=new CompressionStream("gzip"),w=cs.writable.getWriter();w.write(raw);w.close();
-    return {n:rows.length,hash:"g."+b64u(new Uint8Array(await new Response(cs.readable).arrayBuffer()))};
+    return {n:rows.length,np:notes.length,hash:"g."+b64u(new Uint8Array(await new Response(cs.readable).arrayBuffer()))};
   }
-  return {n:rows.length,hash:"u."+b64u(raw)};
+  return {n:rows.length,np:notes.length,hash:"u."+b64u(raw)};
 }
 async function shareLink(){
   let p;try{p=await packShare()}catch(e){toast("No se pudo preparar el enlace.");return}
-  if(!p.n){toast("No hay actividades para compartir.");return}
+  if(!p.n){toast("No hay nada para compartir.");return}
   S.shareUrl=SHARE_BASE+"#d="+p.hash;
-  openModal('<h2>Compartir calendario</h2><p>El enlace lleva adentro '+p.n+" "+plural(p.n,"actividad","actividades")+". Quien lo abra ve el calendario sin cuenta de Claude.</p>"+
+  openModal('<h2>Compartir calendario</h2><p>El enlace lleva adentro '+(p.n-p.np)+" "+plural(p.n-p.np,"actividad","actividades")+(p.np?" y "+p.np+" "+plural(p.np,"pendiente","pendientes"):"")+". Quien lo abra ve el calendario sin cuenta de Claude.</p>"+
     '<textarea id="m-link" readonly style="min-height:96px;font-size:12px">'+esc(S.shareUrl)+"</textarea>"+
     '<p class="st" style="margin-top:8px">El enlace incluye el nombre y las actividades: cualquiera que lo tenga puede verlas. Es una foto de hoy; si algo cambia, genera un enlace nuevo.</p>'+
     (S.shareUrl.length>6000?'<p class="st err">El enlace es largo. Si tu app de mensajes lo corta, quita actividades antiguas.</p>':"")+
@@ -826,16 +926,18 @@ async function importHash(){
     if(+j.t&&+j.t===S.sharedAt&&S.shared.length)return;
     const seen={},list=[];
     j.e.slice(0,600).forEach(r=>{
-      if(!Array.isArray(r)||typeof r[4]!=="string"||!r[4].trim()||!validDate(r[0]))return;
-      const base="s"+hash36(r[0]+"|"+norm(r[4]));
+      if(!Array.isArray(r)||typeof r[4]!=="string"||!r[4].trim())return;
+      const und=!r[0];
+      if(!und&&!validDate(r[0]))return;
+      const base=(und?"p":"s")+hash36((und?"":r[0])+"|"+norm(r[4]));
       seen[base]=(seen[base]||0)+1;
-      list.push({id:base+(seen[base]>1?"-"+seen[base]:""),title:r[4].trim().slice(0,120),date:r[0],endDate:validDate(r[1])&&r[1]>r[0]?r[1]:null,
-        time:validTime(r[2])?r[2]:"",type:TYPES[r[3]]?TYPES[r[3]].id:"otro",notes:typeof r[5]==="string"?r[5].slice(0,400):""});
+      list.push({id:base+(seen[base]>1?"-"+seen[base]:""),title:r[4].trim().slice(0,120),date:und?"":r[0],endDate:!und&&validDate(r[1])&&r[1]>r[0]?r[1]:null,
+        time:!und&&validTime(r[2])?r[2]:"",type:TYPES[r[3]]?TYPES[r[3]].id:"otro",notes:typeof r[5]==="string"?r[5].slice(0,400):""});
     });
     S.shared=list;S.sharedKid=typeof j.k==="string"?j.k.slice(0,40):"";S.sharedAt=+j.t||Date.now();S.kid=S.sharedKid;
     Object.keys(S.done).forEach(k=>{if(!list.some(x=>x.id===k))delete S.done[k]});
     hSave();
-    toast("Calendario actualizado: "+list.length+" "+plural(list.length,"actividad","actividades")+".");
+    toast("Calendario actualizado: "+list.length+" "+plural(list.length,"elemento","elementos")+".");
   }catch(e){toast("No pude abrir el enlace. Pide que te lo manden de nuevo.")}
 }
 
